@@ -70,16 +70,43 @@ def create_order(
             detail=f"уже открыто {limit} заказов, отмени лишние",
         )
 
-    order = Order(student_id=student.id, **payload.model_dump())
-    db.add(order)
-    try:
+    # Уникальный индекс не смотрит на статус, поэтому отменённый или закрытый
+    # заказ навсегда занимал бы место и мешал заказать тот же слот повторно.
+    # Такой заказ воскрешаем вместо создания нового.
+    order = db.scalar(
+        select(Order).where(
+            Order.student_id == student.id,
+            Order.course_id == payload.course_id,
+            Order.event_type == payload.event_type,
+            Order.event_row_number == payload.event_row_number,
+            Order.wanted_event_id == payload.wanted_event_id,
+        )
+    )
+
+    if order is not None:
+        if order.status in (ORDER_OPEN, ORDER_MATCHED):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="такой заказ уже есть",
+            )
+        # Слот, который студент отдаёт, за это время мог поменяться.
+        order.offered_event_id = payload.offered_event_id
+        order.offered_label = payload.offered_label
+        order.wanted_label = payload.wanted_label
+        order.status = ORDER_OPEN
         db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="такой заказ уже есть",
-        ) from None
+    else:
+        order = Order(student_id=student.id, **payload.model_dump())
+        db.add(order)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="такой заказ уже есть",
+            ) from None
+
     db.refresh(order)
 
     # Пытаемся сосватать сразу: если встречный заказ уже лежит, студент увидит

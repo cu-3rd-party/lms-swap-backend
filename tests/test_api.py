@@ -138,6 +138,44 @@ def test_duplicate_order_rejected(client, make_student):
     assert r.status_code == 409
 
 
+def test_cancelled_order_can_be_recreated(client, make_student):
+    """Отменённый заказ не должен навсегда занимать слот из-за уникального индекса."""
+    s = make_student()
+    created = client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B))
+    dropped = client.delete(f"/api/v1/orders/{created.json()['id']}", headers=s.headers)
+    assert dropped.status_code == 204
+
+    again = client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B))
+    assert again.status_code == 201
+    assert again.json()["status"] == "open"
+
+    orders = client.get("/api/v1/orders", headers=s.headers).json()["orders"]
+    assert len(orders) == 1
+
+
+def test_recreated_order_matches_again(client, make_student):
+    a = make_student()
+    b = make_student()
+    created = client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
+    client.delete(f"/api/v1/orders/{created.json()['id']}", headers=a.headers)
+
+    client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
+    again = client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
+    assert again.json()["status"] == "matched"
+
+
+def test_completed_order_can_be_recreated(client, make_student):
+    a = make_student()
+    b = make_student()
+    client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
+    created = client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
+    client.post(f"/api/v1/matches/{created.json()['match']['id']}/confirm", headers=a.headers)
+
+    again = client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
+    assert again.status_code == 201
+    assert again.json()["status"] == "open"
+
+
 def test_self_swap_rejected(client, make_student):
     s = make_student()
     r = client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_A))
