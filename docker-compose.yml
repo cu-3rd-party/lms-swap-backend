@@ -2,25 +2,28 @@ services:
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: swap
-      POSTGRES_PASSWORD: swap
-      POSTGRES_DB: swap
+      POSTGRES_USER: ${POSTGRES_USER:-swap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swap}
+      POSTGRES_DB: ${POSTGRES_DB:-swap}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U swap']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-swap}']
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   api:
     build: .
     environment:
-      DATABASE_URL: postgresql+psycopg://swap:swap@db:5432/swap
-      MATCH_INTERVAL_SECONDS: 30
-      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-swap}:${POSTGRES_PASSWORD:-swap}@db:5432/${POSTGRES_DB:-swap}
+      MATCH_INTERVAL_SECONDS: ${MATCH_INTERVAL_SECONDS:-30}
+      MAX_OPEN_ORDERS_PER_STUDENT: ${MAX_OPEN_ORDERS_PER_STUDENT:-20}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - '8000:8000'
+      # Наружу светит Caddy, поэтому по умолчанию слушаем только localhost.
+      - '${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000'
     depends_on:
       db:
         condition: service_healthy
