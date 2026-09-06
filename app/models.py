@@ -57,10 +57,6 @@ class Student(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # sha256 от ключа устройства. Ключ генерируется расширением при первой
-    # регистрации и больше нигде не хранится в открытом виде.
-    device_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-
     contact_type: Mapped[str] = mapped_column(String(16), nullable=False)
     contact_value: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -72,12 +68,48 @@ class Student(Base):
     )
 
     orders: Mapped[list[Order]] = relationship(back_populates="student")
+    device_keys: Mapped[list[DeviceKey]] = relationship(
+        back_populates="student", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
             "contact_type in ('cu_email', 'telegram', 'custom')",
             name="ck_students_contact_type",
         ),
+    )
+
+
+class DeviceKey(Base):
+    """Ключ устройства, через который студент ходит на биржу.
+
+    Ключей у студента несколько: браузеры не делят `storage.local`, поэтому
+    Chrome и Firefox генерируют разные, а переустановка расширения даёт ещё
+    один. Хранится только sha256 — сам ключ живёт лишь в браузере.
+
+    Добавить ключ может любой, кто знает `student_id`. Это осознанный размен:
+    перечислить чужие идентификаторы через API LMS нельзя (все списочные
+    ручки закрыты), а без этого биржа ломалась у каждого, кто открыл LMS во
+    втором браузере.
+    """
+
+    __tablename__ = "device_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    student_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("students.id", ondelete="CASCADE"), nullable=False
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=func.now()
+    )
+
+    student: Mapped[Student] = relationship(back_populates="device_keys")
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "key_hash", name="uq_device_keys_student_key"),
+        Index("ix_device_keys_lookup", "student_id", "key_hash"),
     )
 
 

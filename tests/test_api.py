@@ -22,18 +22,83 @@ def test_register_is_idempotent_for_same_device(client, make_student):
     assert r.json()["contact_type"] == "cu_email"
 
 
-def test_register_rejects_takeover_from_another_device(client, make_student):
+def test_second_browser_gets_its_own_device_key(client, make_student):
+    """Chrome и Firefox не делят storage.local — ключей у студента несколько."""
     s = make_student()
+    second_key = uuid.uuid4().hex + uuid.uuid4().hex
+
     r = client.post(
         "/api/v1/register",
         json={
             "student_id": s.id,
-            "device_key": uuid.uuid4().hex + uuid.uuid4().hex,
+            "device_key": second_key,
             "contact_type": "telegram",
-            "contact_value": "@intruder",
+            "contact_value": "@tester",
         },
     )
-    assert r.status_code == 409
+    assert r.status_code == 201
+
+    second = {"Authorization": f"Bearer {second_key}", "X-Student-Id": s.id}
+    assert client.get("/api/v1/orders", headers=second).status_code == 200
+    # Первый браузер продолжает работать.
+    assert client.get("/api/v1/orders", headers=s.headers).status_code == 200
+    assert client.get("/api/v1/me/devices", headers=second).json() == {"devices": 2}
+
+
+def test_orders_are_shared_between_devices(client, make_student):
+    s = make_student()
+    second_key = uuid.uuid4().hex + uuid.uuid4().hex
+    client.post(
+        "/api/v1/register",
+        json={
+            "student_id": s.id,
+            "device_key": second_key,
+            "contact_type": "telegram",
+            "contact_value": "@tester",
+        },
+    )
+    second = {"Authorization": f"Bearer {second_key}", "X-Student-Id": s.id}
+
+    client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B))
+    assert len(client.get("/api/v1/orders", headers=second).json()["orders"]) == 1
+
+
+def test_repeat_registration_does_not_duplicate_key(client, make_student):
+    s = make_student()
+    client.post(
+        "/api/v1/register",
+        json={
+            "student_id": s.id,
+            "device_key": s.device_key,
+            "contact_type": "telegram",
+            "contact_value": "@tester",
+        },
+    )
+    assert client.get("/api/v1/me/devices", headers=s.headers).json() == {"devices": 1}
+
+
+def test_device_keys_are_evicted_past_the_limit(client, make_student, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_device_keys_per_student", 2)
+
+    s = make_student()
+    keys = [uuid.uuid4().hex + uuid.uuid4().hex for _ in range(2)]
+    for key in keys:
+        client.post(
+            "/api/v1/register",
+            json={
+                "student_id": s.id,
+                "device_key": key,
+                "contact_type": "telegram",
+                "contact_value": "@tester",
+            },
+        )
+
+    newest = {"Authorization": f"Bearer {keys[-1]}", "X-Student-Id": s.id}
+    assert client.get("/api/v1/me/devices", headers=newest).json() == {"devices": 2}
+    # Самый старый ключ вытеснен.
+    assert client.get("/api/v1/orders", headers=s.headers).status_code == 401
 
 
 def test_wrong_device_key_is_rejected(client, make_student):
