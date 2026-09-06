@@ -37,7 +37,6 @@ ORDER_CANCELLED = "cancelled"
 # Статусы совпадения
 MATCH_PENDING = "pending"
 MATCH_COMPLETED = "completed"
-MATCH_DECLINED = "declined"
 
 # Способы связи
 CONTACT_CU_EMAIL = "cu_email"

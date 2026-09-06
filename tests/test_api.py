@@ -164,12 +164,12 @@ def test_recreated_order_matches_again(client, make_student):
     assert again.json()["status"] == "matched"
 
 
-def test_completed_order_can_be_recreated(client, make_student):
+def test_closed_order_can_be_recreated(client, make_student):
     a = make_student()
     b = make_student()
     client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
     created = client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
-    client.post(f"/api/v1/matches/{created.json()['match']['id']}/confirm", headers=a.headers)
+    client.post(f"/api/v1/matches/{created.json()['match']['id']}/close", headers=a.headers)
 
     again = client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
     assert again.status_code == 201
@@ -227,34 +227,68 @@ def test_contacts_hidden_until_match(client, make_student):
     assert orders[0]["match"] is None
 
 
-def test_confirm_closes_both_orders(client, make_student):
-    a = make_student()
-    b = make_student()
+def _matched_pair(client, a, b):
     client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
     created = client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
-    match_id = created.json()["match"]["id"]
-
-    assert client.post(f"/api/v1/matches/{match_id}/confirm", headers=a.headers).status_code == 204
-    for s in (a, b):
-        orders = client.get("/api/v1/orders", headers=s.headers).json()["orders"]
-        assert orders[0]["status"] == "completed"
+    return created.json()["match"]["id"]
 
 
-def test_decline_returns_both_to_search_and_does_not_rematch(client, make_student):
+def test_close_hides_order_only_for_the_one_who_pressed(client, make_student):
+    """ОК — личное подтверждение: у второй стороны карточка остаётся."""
     a = make_student()
     b = make_student()
-    client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
-    created = client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
-    match_id = created.json()["match"]["id"]
+    match_id = _matched_pair(client, a, b)
 
-    assert client.post(f"/api/v1/matches/{match_id}/decline", headers=b.headers).status_code == 204
+    assert client.post(f"/api/v1/matches/{match_id}/close", headers=a.headers).status_code == 204
+
+    assert client.get("/api/v1/orders", headers=a.headers).json()["orders"] == []
+
+    left = client.get("/api/v1/orders", headers=b.headers).json()["orders"]
+    assert len(left) == 1
+    assert left[0]["status"] == "matched"
+    assert left[0]["match"] is not None
+
+
+def test_close_by_both_sides_empties_both_lists(client, make_student):
+    a = make_student()
+    b = make_student()
+    match_id = _matched_pair(client, a, b)
 
     for s in (a, b):
-        order = client.get("/api/v1/orders", headers=s.headers).json()["orders"][0]
-        assert order["status"] == "open"
-        assert order["match"] is None
+        closed = client.post(f"/api/v1/matches/{match_id}/close", headers=s.headers)
+        assert closed.status_code == 204
 
-    # Фоновой проход не должен свести ту же пару повторно.
+    for s in (a, b):
+        assert client.get("/api/v1/orders", headers=s.headers).json()["orders"] == []
+
+
+def test_close_is_idempotent(client, make_student):
+    a = make_student()
+    b = make_student()
+    match_id = _matched_pair(client, a, b)
+
+    assert client.post(f"/api/v1/matches/{match_id}/close", headers=a.headers).status_code == 204
+    assert client.post(f"/api/v1/matches/{match_id}/close", headers=a.headers).status_code == 204
+    assert client.get("/api/v1/orders", headers=a.headers).json()["orders"] == []
+
+
+def test_close_rejects_a_stranger(client, make_student):
+    a = make_student()
+    b = make_student()
+    stranger = make_student()
+    match_id = _matched_pair(client, a, b)
+
+    r = client.post(f"/api/v1/matches/{match_id}/close", headers=stranger.headers)
+    assert r.status_code == 404
+
+
+def test_closed_pair_is_not_matched_again(client, make_student):
+    a = make_student()
+    b = make_student()
+    match_id = _matched_pair(client, a, b)
+    for s in (a, b):
+        client.post(f"/api/v1/matches/{match_id}/close", headers=s.headers)
+
     from app.db import SessionLocal
     from app.matching import run_sweep
 

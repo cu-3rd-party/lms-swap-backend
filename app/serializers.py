@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.matching import matches_for_orders
-from app.models import MATCH_DECLINED, Match, Order, Student
+from app.models import Match, Order, Student
 from app.schemas import MatchOut, OrderOut
 
 
@@ -14,10 +14,6 @@ def _counterpart_order(match: Match, order: Order) -> Order:
 
 
 def build_match_out(db: Session, match: Match, order: Order) -> MatchOut | None:
-    """Отклонённое совпадение показывать нечего — и контакт раскрывать нельзя."""
-    if match.status == MATCH_DECLINED:
-        return None
-
     other = _counterpart_order(match, order)
     other_student = db.get(Student, other.student_id)
     if other_student is None:

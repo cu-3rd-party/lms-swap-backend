@@ -12,6 +12,7 @@ from app.matching import try_match_order
 from app.models import (
     MATCH_PENDING,
     ORDER_CANCELLED,
+    ORDER_COMPLETED,
     ORDER_MATCHED,
     ORDER_OPEN,
     Match,
@@ -28,15 +29,21 @@ router = APIRouter(prefix="/api/v1", tags=["orders"])
 def list_orders(
     student: Student = Depends(current_student), db: Session = Depends(get_db)
 ) -> OrdersOut:
-    """Все незакрытые заказы студента вместе с найденными совпадениями.
+    """Живые заказы студента вместе с найденными совпадениями.
 
     Расширение опрашивает этот метод, пока страница открыта, — отсюда и
     появляется «нашлось совпадение» в меню «Мои запросы».
+
+    Отменённые и закрытые заказы не отдаём: с ними студенту делать нечего, а
+    висящая карточка «обмен закрыт» только мешает.
     """
     orders = list(
         db.scalars(
             select(Order)
-            .where(Order.student_id == student.id, Order.status != ORDER_CANCELLED)
+            .where(
+                Order.student_id == student.id,
+                Order.status.notin_([ORDER_CANCELLED, ORDER_COMPLETED]),
+            )
             .order_by(Order.created_at.desc())
         )
     )
