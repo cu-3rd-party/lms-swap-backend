@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import switch
 from app.config import get_settings
 from app.db import SessionLocal
 from app.matching import run_sweep
@@ -81,3 +82,12 @@ app.include_router(matches.router)
 @app.get("/api/v1/health", tags=["service"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/v1/status", tags=["service"])
+def swap_status() -> dict:
+    """Включена ли биржа. Без авторизации — расширение спрашивает это первым,
+    ещё до того, как выяснять, кто за браузером: если биржа выключена, личность
+    студента сервису не нужна вовсе."""
+    enabled = switch.is_enabled()
+    return {"enabled": enabled, "message": None if enabled else switch.disabled_message()}

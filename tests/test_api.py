@@ -1,5 +1,7 @@
 import uuid
 
+import pytest
+
 from tests.conftest import SLOT_A, SLOT_B, SLOT_C, order_payload
 
 
@@ -395,3 +397,102 @@ def test_open_order_limit(client, make_student, monkeypatch):
     client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B))
     r = client.post("/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_C))
     assert r.status_code == 429
+
+
+# --- рубильник биржи ---------------------------------------------------------
+
+
+@pytest.fixture
+def disabled():
+    """Выключает биржу на время теста."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.swap_enabled = False
+    yield settings
+    settings.swap_enabled = True
+
+
+def test_status_says_enabled_by_default(client):
+    body = client.get("/api/v1/status").json()
+    assert body == {"enabled": True, "message": None}
+
+
+def test_status_says_disabled_with_message(client, disabled):
+    body = client.get("/api/v1/status").json()
+    assert body["enabled"] is False
+    assert body["message"]
+
+
+def test_status_needs_no_auth(client, disabled):
+    """Расширение спрашивает статус раньше, чем выясняет, кто за браузером."""
+    assert client.get("/api/v1/status").status_code == 200
+
+
+def test_disabled_blocks_registration(client, disabled):
+    r = client.post(
+        "/api/v1/register",
+        json={
+            "student_id": str(uuid.uuid4()),
+            "device_key": uuid.uuid4().hex * 2,
+            "contact_type": "telegram",
+            "contact_value": "@someone",
+        },
+    )
+    assert r.status_code == 503
+
+
+
+def test_disabled_blocks_orders_and_matches(client, make_student):
+    from app.config import get_settings
+
+    a = make_student()
+    b = make_student()
+    created = client.post("/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_B))
+    counter = client.post("/api/v1/orders", headers=b.headers, json=order_payload(SLOT_B, SLOT_A))
+    match_id = counter.json()["match"]["id"]
+
+    settings = get_settings()
+    settings.swap_enabled = False
+    try:
+        # менять нельзя
+        assert client.post(
+            "/api/v1/orders", headers=a.headers, json=order_payload(SLOT_A, SLOT_C)
+        ).status_code == 503
+        assert client.delete(
+            f"/api/v1/orders/{created.json()['id']}", headers=a.headers
+        ).status_code == 503
+        assert client.post(
+            f"/api/v1/matches/{match_id}/close", headers=a.headers
+        ).status_code == 503
+        assert client.put(
+            "/api/v1/me/contact",
+            headers=a.headers,
+            json={"contact_type": "telegram", "contact_value": "@new"},
+        ).status_code == 503
+
+        # читать можно: старые заказы никуда не делись
+        orders = client.get("/api/v1/orders", headers=a.headers)
+        assert orders.status_code == 200
+        assert len(orders.json()["orders"]) == 1
+        assert client.get("/api/v1/me", headers=a.headers).status_code == 200
+        assert client.get("/api/v1/health").json() == {"status": "ok"}
+    finally:
+        settings.swap_enabled = True
+
+
+def test_enabling_back_restores_writes(client, make_student):
+    from app.config import get_settings
+
+    s = make_student()
+    settings = get_settings()
+    settings.swap_enabled = False
+    assert client.post(
+        "/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B)
+    ).status_code == 503
+
+    settings.swap_enabled = True
+    assert client.get("/api/v1/status").json()["enabled"] is True
+    assert client.post(
+        "/api/v1/orders", headers=s.headers, json=order_payload(SLOT_A, SLOT_B)
+    ).status_code == 201

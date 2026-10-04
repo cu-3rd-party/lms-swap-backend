@@ -14,6 +14,7 @@ from app.models import (
     Order,
     Student,
 )
+from app.switch import require_enabled
 
 router = APIRouter(prefix="/api/v1", tags=["matches"])
 
@@ -23,6 +24,7 @@ def close(
     match_id: str,
     student: Student = Depends(current_student),
     db: Session = Depends(get_db),
+    _: None = Depends(require_enabled),
 ) -> None:
     """Убирает совпадение у того, кто нажал, — вторая сторона своё ещё видит.
 

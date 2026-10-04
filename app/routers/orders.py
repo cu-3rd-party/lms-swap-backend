@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.schemas import DemandOut, OrderIn, OrderOut, OrdersOut, StudentOut
 from app.serializers import build_orders_out
+from app.switch import require_enabled
 
 router = APIRouter(prefix="/api/v1", tags=["orders"])
 
@@ -58,6 +59,7 @@ def create_order(
     payload: OrderIn,
     student: Student = Depends(current_student),
     db: Session = Depends(get_db),
+    _: None = Depends(require_enabled),
 ) -> OrderOut:
     if payload.offered_event_id == payload.wanted_event_id:
         raise HTTPException(
@@ -129,6 +131,7 @@ def cancel_order(
     order_id: str,
     student: Student = Depends(current_student),
     db: Session = Depends(get_db),
+    _: None = Depends(require_enabled),
 ) -> None:
     order = db.get(Order, order_id)
     if order is None or order.student_id != student.id:

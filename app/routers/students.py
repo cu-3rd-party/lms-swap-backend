@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import DeviceKey, Student
 from app.schemas import ContactIn, RegisterIn, StudentOut
+from app.switch import require_enabled
 
 router = APIRouter(prefix="/api/v1", tags=["students"])
 
@@ -51,7 +52,11 @@ def _register_device_key(db: Session, student_id: str, key_hash: str) -> None:
 
 
 @router.post("/register", response_model=StudentOut, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterIn, db: Session = Depends(get_db)) -> Student:
+def register(
+    payload: RegisterIn,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_enabled),
+) -> Student:
     """Регистрирует студента и запоминает ключ устройства, с которого пришли.
 
     Вызов с новым ключом добавляет ещё одно устройство, а не отклоняется:
@@ -98,6 +103,7 @@ def update_contact(
     payload: ContactIn,
     student: Student = Depends(current_student),
     db: Session = Depends(get_db),
+    _: None = Depends(require_enabled),
 ) -> Student:
     _check_contact_length(payload.contact_value)
     student.contact_type = payload.contact_type
